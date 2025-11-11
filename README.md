@@ -129,5 +129,4 @@ Lead Developer: *Theomel De Guzman*
 
 ## 📜 License
 
-This project is released for academic and research use only.
-© 2025 PapiiCholoo — All rights reserved.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
