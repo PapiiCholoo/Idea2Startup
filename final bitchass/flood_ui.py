@@ -1,15 +1,17 @@
-# flood_ui_pro.py
+# ===========================================================
+# flood_ui_pro.py  (with 💨 Quick Test Mode)
+# ===========================================================
+
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import threading, time
 import numpy as np
 import matplotlib
-matplotlib.use("TkAgg")
+matplotlib.use("TkAgg")  # use TkAgg for GUI rendering
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
-from mpl_toolkits.mplot3d import Axes3D
-from matplotlib.animation import FuncAnimation
 from matplotlib.backends.backend_pdf import PdfPages
+from mpl_toolkits.mplot3d import Axes3D
 import chaos_flood_model as cfm
 
 # ===== COLORS & STYLE =====
@@ -19,6 +21,7 @@ BG = "#F8FBFF"
 DARK_TEXT = "#0C2340"
 FONT = ("Segoe UI", 10)
 TITLE_FONT = ("Segoe UI Semibold", 15)
+
 
 class FloodUI:
     def __init__(self, root):
@@ -69,8 +72,15 @@ class FloodUI:
         # ---- buttons ----
         btn_frame = ttk.Frame(root)
         btn_frame.pack(fill=tk.X, padx=20, pady=5)
+
         self.btn_run = ttk.Button(btn_frame, text="▶ Run Simulation", command=self.run_thread)
         self.btn_run.pack(side=tk.LEFT, padx=6)
+
+        # 💨 Quick Test Mode button
+        self.quick_mode = False
+        self.btn_quick = ttk.Button(btn_frame, text="💨 Quick Test Mode: OFF", command=self.toggle_quick_mode)
+        self.btn_quick.pack(side=tk.LEFT, padx=6)
+
         ttk.Button(btn_frame, text="💾 Save Panel", command=self.save_panel).pack(side=tk.LEFT, padx=6)
         ttk.Button(btn_frame, text="🧾 Export All (PDF)", command=self.export_pdf).pack(side=tk.LEFT, padx=6)
 
@@ -100,10 +110,20 @@ class FloodUI:
             self.canvases.append(canvas)
 
         # ---- footer ----
-        ttk.Label(root, text="© 2025 Chaos Research Lab | Professional Blue-White UI",
+        ttk.Label(root, text="© 2025 Papi Choloo | Chaos-Enhanced Flood Prediction System",
                   foreground="#555", font=("Segoe UI", 9)).pack(pady=5)
         self.results = None
-        self.anim = None
+
+    # ===========================================================
+    # 💨 Quick Mode Toggle
+    def toggle_quick_mode(self):
+        self.quick_mode = not self.quick_mode
+        if self.quick_mode:
+            self.btn_quick.config(text="💨 Quick Test Mode: ON", style="Quick.TButton")
+            self.status_label.config(text="Quick Test Mode active (small grid, fast test).")
+        else:
+            self.btn_quick.config(text="💨 Quick Test Mode: OFF")
+            self.status_label.config(text="Quick Test Mode deactivated.")
 
     # ===========================================================
     def run_thread(self):
@@ -127,6 +147,13 @@ class FloodUI:
                 "output_interval": float(self.entries["Output Interval (s)"].get()),
             }
             n_ens = int(self.entries["Ensemble Members"].get())
+
+            # 💨 Override for Quick Test
+            if self.quick_mode:
+                p["Nx"], p["Ny"] = 20, 10
+                p["t_end"] = 60
+                p["output_interval"] = 5
+                n_ens = 1
 
             self.results = []
             for i in range(n_ens):
@@ -160,29 +187,20 @@ class FloodUI:
         fig.colorbar(im, ax=ax, label="Depth (m)")
         self.canvases[0].draw()
 
-        # --- 3D Lorenz (with start & end markers) ---
+        # --- 3D Lorenz ---
         fig = self.figures[1]; fig.clf()
         ax = fig.add_subplot(111, projection="3d")
 
         for e in self.results:
             ax.plot(e["lorenz_x"], e["lorenz_y"], e["lorenz_z"], alpha=0.4, color="#9CCAF6")
 
-        # Main trajectory (highlighted)
         ax.plot(res["lorenz_x"], res["lorenz_y"], res["lorenz_z"], color=PRIMARY, linewidth=2, label="Main Trajectory")
+        ax.scatter(res["lorenz_x"][0], res["lorenz_y"][0], res["lorenz_z"][0], color="green", s=60, label="Start (t=0)")
+        ax.scatter(res["lorenz_x"][-1], res["lorenz_y"][-1], res["lorenz_z"][-1], color="red", s=60, label="End (t=end)")
 
-        # Start and End points
-        ax.scatter(res["lorenz_x"][0], res["lorenz_y"][0], res["lorenz_z"][0],
-                color="green", s=60, label="Start (t=0)")
-        ax.scatter(res["lorenz_x"][-1], res["lorenz_y"][-1], res["lorenz_z"][-1],
-                color="red", s=60, label="End (t=end)")
-
-        # Labels and styling
         ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
         ax.set_title("Lorenz Attractor (Chaotic Component)")
         ax.legend(loc="upper left")
-        ax.grid(True)
-
-        # Draw canvas
         self.canvases[1].draw()
 
         # --- Rainfall vs Runoff ---
@@ -243,8 +261,10 @@ class FloodUI:
                     pdf.savefig(fig)
             messagebox.showinfo("Exported", f"All panels saved to {path}")
 
+
 # ===========================================================
 if __name__ == "__main__":
     root = tk.Tk()
     app = FloodUI(root)
     root.mainloop()
+    

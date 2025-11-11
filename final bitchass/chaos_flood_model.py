@@ -56,18 +56,9 @@ class Lorenz63:
 # Precipitation model
 # --------------------------
 def willoughby_rahn_r(Pmax_mm_per_h, Rmax_km, r_km, r1_factor=0.5, r2_factor=3.0):
-    """
-    Returns precipitation rate field in m/s using Willoughby-Rahn profile.
-    Pmax_mm_per_h: scalar (mm/h)
-    Rmax_km: scalar
-    r_km: array of distances in km
-    """
     r1 = r1_factor * Rmax_km
     r2 = r2_factor * Rmax_km
-    # avoid division by zero for r1,r2
-    # Pbase in mm/h:
     Pbase_mm_h = Pmax_mm_per_h * (1.0 - np.exp(-r_km / r1)) * np.exp(-r_km / r2)
-    # convert to m/s
     Pbase_m_s = (Pbase_mm_h * 1e-3) / 3600.0
     return Pbase_m_s
 
@@ -83,8 +74,7 @@ def compute_typhoon_precip_field(Pmax_mm_h, Rmax_km, X_grid_m, Y_grid_m, eye_x_m
 class SCSInfiltration:
     def __init__(self, CN=70.0):
         self.CN = float(CN)
-        S_in_inch = 1000.0 / self.CN - 10.0  # in inches
-        # convert to meters
+        S_in_inch = 1000.0 / self.CN - 10.0
         self.S = S_in_inch * 0.0254
         self.Ia = 0.2 * self.S
 
@@ -99,7 +89,6 @@ class SCSInfiltration:
         return Q
 
     def instantaneous_infiltration_rate(self, P_instant_m_s, P_cum_m, dPdt=0.0):
-        # Return instantaneous infiltration rate I_inst [m/s], per cell
         P = P_cum_m
         P_inst = P_instant_m_s
         I_inst = np.zeros_like(P)
@@ -128,19 +117,16 @@ class FloodGrid:
         self.Ly = float(Ly)
         self.dx = self.Lx / self.Nx
         self.dy = self.Ly / self.Ny
-        # cell centers
         self.xc = (np.arange(self.Nx) + 0.5) * self.dx
         self.yc = (np.arange(self.Ny) + 0.5) * self.dy
         X, Y = np.meshgrid(self.xc, self.yc)
         self.X = X
         self.Y = Y
-        # primary fields (cells indexed [j, i] where j in y, i in x)
-        self.h = np.zeros((self.Ny, self.Nx), dtype=float)   # water depth
-        self.u = np.zeros((self.Ny, self.Nx), dtype=float)   # x-velocity
-        self.v = np.zeros((self.Ny, self.Nx), dtype=float)   # y-velocity
-        self.zb = np.zeros((self.Ny, self.Nx), dtype=float)  # bed elevation
+        self.h = np.zeros((self.Ny, self.Nx), dtype=float)
+        self.u = np.zeros((self.Ny, self.Nx), dtype=float)
+        self.v = np.zeros((self.Ny, self.Nx), dtype=float)
+        self.zb = np.zeros((self.Ny, self.Nx), dtype=float)
         self.n = manning_n * np.ones((self.Ny, self.Nx), dtype=float)
-        # cumulative precipitation & runoff
         self.P_cum = np.zeros((self.Ny, self.Nx), dtype=float)
         self.Q_cum = np.zeros((self.Ny, self.Nx), dtype=float)
         self.CN = CN * np.ones((self.Ny, self.Nx), dtype=float)
@@ -148,7 +134,6 @@ class FloodGrid:
         self.mask = np.ones((self.Ny, self.Nx), dtype=float)
 
     def set_bed_gaussian(self, peak=1966.0, x0=None, y0=None, sigma=3000.0):
-        # Default center at domain center
         if x0 is None:
             x0 = self.Lx / 2.0
         if y0 is None:
@@ -158,56 +143,34 @@ class FloodGrid:
         self.zb = peak * np.exp(-0.5 * (dx*dx + dy*dy) / (sigma*sigma))
 
 # --------------------------
-# HLLC Riemann solver (1D-style for interfaces)
+# HLLC Riemann solver
 # --------------------------
 def hllc_flux_1d(hL, uL, vL, hR, uR, vR, g=g):
-    """
-    Compute HLLC flux for the shallow water (2D) rotated to a 1D interface.
-    Returns flux vector (Fh, Fhu, Fhv).
-    """
     tiny = 1e-12
     hL = max(hL, 0.0)
     hR = max(hR, 0.0)
-
-    # conservative state
     huL = hL * uL
     hvL = hL * vL
     huR = hR * uR
     hvR = hR * vR
-
-    # wave speeds
     cL = np.sqrt(g * hL) if hL > tiny else 0.0
     cR = np.sqrt(g * hR) if hR > tiny else 0.0
-
     SL = min(uL - cL, uR - cR)
     SR = max(uL + cL, uR + cR)
-
-    # physical fluxes
     FhL = huL
     FhuL = hL * uL * uL + 0.5 * g * hL * hL
     FhvL = hL * uL * vL
-
     FhR = huR
     FhuR = hR * uR * uR + 0.5 * g * hR * hR
     FhvR = hR * uR * vR
-
-    # avoid degenerate
     if SR - SL < 1e-14:
         return 0.5*(FhL + FhR), 0.5*(FhuL + FhuR), 0.5*(FhvL + FhvR)
-
-    # contact wave speed S*
     S_star = (SR * uR - SL * uL + 0.5 * g * (hL*hL - hR*hR)) / (SR - SL)
-
-    # Compute star-region states (left)
     hstarL = hL * (SL - uL) / (SL - S_star) if abs(SL - S_star) > 1e-15 else hL
     hstarR = hR * (SR - uR) / (SR - S_star) if abs(SR - S_star) > 1e-15 else hR
-
-    # Flux selection
     if 0.0 <= SL:
         return FhL, FhuL, FhvL
     elif SL < 0.0 <= S_star:
-        # F*L = FL + SL (U*L - UL)
-        # compute U*L conservative vector
         hu_starL = hstarL * S_star
         hv_starL = hstarL * vL
         Fh_starL = FhL + SL * (hstarL - hL)
@@ -215,7 +178,6 @@ def hllc_flux_1d(hL, uL, vL, hR, uR, vR, g=g):
         Fhv_starL = FhvL + SL * (hv_starL - hvL)
         return Fh_starL, Fhu_starL, Fhv_starL
     elif S_star < 0.0 <= SR:
-        # F*R
         hu_starR = hstarR * S_star
         hv_starR = hstarR * vR
         Fh_starR = FhR + SR * (hstarR - hR)
@@ -226,10 +188,9 @@ def hllc_flux_1d(hL, uL, vL, hR, uR, vR, g=g):
         return FhR, FhuR, FhvR
 
 # --------------------------
-# Spatial operator (finite-volume flux differences + bed slope)
+# Hydrostatic reconstruction
 # --------------------------
 def hydrostatic_reconstruction(hL, zbL, hR, zbR):
-    # reconstruct depths for well-balanced HLLC
     etaL = hL + zbL
     etaR = hR + zbR
     zbmax = np.maximum(zbL, zbR)
@@ -237,30 +198,25 @@ def hydrostatic_reconstruction(hL, zbL, hR, zbR):
     hR_star = np.maximum(0.0, etaR - zbmax)
     return hL_star, hR_star, zbmax
 
+# --------------------------
+# Spatial operator (FV)
+# --------------------------
 def spatial_operator(grid: FloodGrid):
     Ny, Nx = grid.Ny, grid.Nx
     dx, dy = grid.dx, grid.dy
-
-    # allocate rhs arrays
     rhs_h = np.zeros_like(grid.h)
     rhs_hu = np.zeros_like(grid.h)
     rhs_hv = np.zeros_like(grid.h)
-
-    # x-direction fluxes (faces i+1/2 for i=0..Nx)
     Fx_h = np.zeros((Ny, Nx+1))
     Fx_hu = np.zeros((Ny, Nx+1))
     Fx_hv = np.zeros((Ny, Nx+1))
-
-    # prepare left/right states with reflective boundary (simple)
     for j in range(Ny):
         for i_face in range(Nx+1):
-            # indices for left cell i = i_face-1, right cell i = i_face
             iL = i_face - 1
             iR = i_face
             if iL < 0:
-                # left ghost mirrors first interior
                 hL = grid.h[j, 0]
-                uL = -grid.u[j, 0]   # reflect normal velocity
+                uL = -grid.u[j, 0]
                 vL = grid.v[j, 0]
                 zbL = grid.zb[j, 0]
             else:
@@ -269,25 +225,19 @@ def spatial_operator(grid: FloodGrid):
                 hR = grid.h[j, -1]; uR = -grid.u[j, -1]; vR = grid.v[j, -1]; zbR = grid.zb[j, -1]
             else:
                 hR = grid.h[j, iR]; uR = grid.u[j, iR]; vR = grid.v[j, iR]; zbR = grid.zb[j, iR]
-
-            # hydrostatic reconstruction
             hLr, hRr, zbmax = hydrostatic_reconstruction(hL, zbL, hR, zbR)
-            # if reconstructed depths are zero, velocities should be zero to avoid nan
             uLr = uL if hLr > 1e-12 else 0.0
             vLr = vL if hLr > 1e-12 else 0.0
             uRr = uR if hRr > 1e-12 else 0.0
             vRr = vR if hRr > 1e-12 else 0.0
-
             Fh, Fhu, Fhv = hllc_flux_1d(hLr, uLr, vLr, hRr, uRr, vRr, g=g)
             Fx_h[j, i_face] = Fh
             Fx_hu[j, i_face] = Fhu
             Fx_hv[j, i_face] = Fhv
-
-    # y-direction fluxes
+    # y-direction (similar rotation)
     Gy_h = np.zeros((Ny+1, Nx))
     Gy_hu = np.zeros((Ny+1, Nx))
     Gy_hv = np.zeros((Ny+1, Nx))
-
     for i in range(Nx):
         for j_face in range(Ny+1):
             jL = j_face - 1
@@ -300,51 +250,35 @@ def spatial_operator(grid: FloodGrid):
                 hR = grid.h[-1, i]; uR = grid.u[-1, i]; vR = -grid.v[-1, i]; zbR = grid.zb[-1, i]
             else:
                 hR = grid.h[jR, i]; uR = grid.u[jR, i]; vR = grid.v[jR, i]; zbR = grid.zb[jR, i]
-
-            # swap x/y roles when calling 1D solver (rotate velocities)
             hLr, hRr, zbmax = hydrostatic_reconstruction(hL, zbL, hR, zbR)
             uLr = vL if hLr > 1e-12 else 0.0
             vLr = uL if hLr > 1e-12 else 0.0
             uRr = vR if hRr > 1e-12 else 0.0
             vRr = uR if hRr > 1e-12 else 0.0
-
-            # compute flux in y-direction (note ordering)
             Fh, Fhu, Fhv = hllc_flux_1d(hLr, uLr, vLr, hRr, uRr, vRr, g=g)
-            # rotate back: Fh -> mass flux in y, Fhu -> momentum in rotated dir
             Gy_h[j_face, i] = Fh
-            # careful mapping: Fhu corresponds to hu in rotated coords (v-component momentum)
-            Gy_hv[j_face, i] = Fhu  # corresponds to h*v*u_rot??? we will use consistent divergence below
-            Gy_hu[j_face, i] = Fhv  # cross component
-
-    # divergence of fluxes
+            Gy_hv[j_face, i] = Fhu
+            Gy_hu[j_face, i] = Fhv
     rhs_h += - (Fx_h[:, 1:] - Fx_h[:, :-1]) / dx
     rhs_h += - (Gy_h[1:, :] - Gy_h[:-1, :]) / dy
-
     rhs_hu += - (Fx_hu[:, 1:] - Fx_hu[:, :-1]) / dx
     rhs_hu += - (Gy_hu[1:, :] - Gy_hu[:-1, :]) / dy
-
     rhs_hv += - (Fx_hv[:, 1:] - Fx_hv[:, :-1]) / dx
     rhs_hv += - (Gy_hv[1:, :] - Gy_hv[:-1, :]) / dy
-
-    # bed slope source: -g*h*dzb/dx and -g*h*dzb/dy
     dzbdx = np.zeros_like(grid.zb)
     dzbdy = np.zeros_like(grid.zb)
-    # centered differences
     dzbdx[:, 1:-1] = (grid.zb[:, 2:] - grid.zb[:, :-2]) / (2.0 * dx)
     dzbdx[:, 0] = (grid.zb[:, 1] - grid.zb[:, 0]) / dx
     dzbdx[:, -1] = (grid.zb[:, -1] - grid.zb[:, -2]) / dx
-
     dzbdy[1:-1, :] = (grid.zb[2:, :] - grid.zb[:-2, :]) / (2.0 * dy)
     dzbdy[0, :] = (grid.zb[1, :] - grid.zb[0, :]) / dy
     dzbdy[-1, :] = (grid.zb[-1, :] - grid.zb[-2, :]) / dy
-
     rhs_hu += - g * grid.h * dzbdx
     rhs_hv += - g * grid.h * dzbdy
-
     return rhs_h, rhs_hu, rhs_hv
 
 # --------------------------
-# Friction (Manning) semi-implicit
+# Friction
 # --------------------------
 def apply_manning_friction(grid: FloodGrid, dt):
     h = grid.h
@@ -354,10 +288,8 @@ def apply_manning_friction(grid: FloodGrid, dt):
     hv = h * grid.v
     speed = np.sqrt(grid.u**2 + grid.v**2)
     denom = 1.0 + dt * g * n**2 * speed / (np.maximum(h, tiny)**(4.0/3.0))
-    # update momenta
     hu_new = hu / denom
     hv_new = hv / denom
-    # avoid divide by zero
     mask = h > 1e-12
     grid.u[:] = 0.0
     grid.v[:] = 0.0
@@ -365,30 +297,22 @@ def apply_manning_friction(grid: FloodGrid, dt):
     grid.v[mask] = hv_new[mask] / h[mask]
 
 # --------------------------
-# Source term: precipitation + infiltration
+# Precipitation + infiltration
 # --------------------------
 def apply_precip_infiltration(grid: FloodGrid, P_field_m_s, dt):
-    """
-    P_field_m_s: precipitation rate (m/s) array same shape as grid.h
-    Updates grid.P_cum, grid.Q_cum, grid.h accordingly.
-    Uses SCS method.
-    """
     scs = grid.scs
     dP = P_field_m_s * dt
     grid.P_cum += dP
     Q_cum_new = scs.cumulative_runoff_from_P(grid.P_cum)
     dQ = Q_cum_new - grid.Q_cum
     grid.Q_cum = Q_cum_new
-    # infiltration = dP - dQ (net loss from surface storage)
     dF = dP - dQ
-    # add precipitation (depth) then remove infiltration loss
     grid.h += dP
     grid.h -= dF
-    # ensure non-negative
     grid.h[:] = np.maximum(0.0, grid.h)
 
 # --------------------------
-# Time step computation (CFL)
+# CFL timestep
 # --------------------------
 def compute_timestep(grid: FloodGrid, alpha_CFL=0.3, dt_max=1.0, dt_min=1e-6):
     c = np.sqrt(g * np.maximum(grid.h, 0.0))
@@ -402,7 +326,7 @@ def compute_timestep(grid: FloodGrid, alpha_CFL=0.3, dt_max=1.0, dt_min=1e-6):
     return dt
 
 # --------------------------
-# State pack/unpack helpers
+# State helpers
 # --------------------------
 def pack_state(grid: FloodGrid):
     return np.stack([grid.h, grid.h * grid.u, grid.h * grid.v], axis=0)
@@ -422,21 +346,15 @@ def spatial_operator_pack(grid: FloodGrid):
     return np.stack([rhs_h, rhs_hu, rhs_hv], axis=0)
 
 # --------------------------
-# Main simulate routine
+# Main simulation routine
 # --------------------------
 def simulate_flood(grid: FloodGrid, lorenz: Lorenz63, t_end=60.0, output_interval=10.0, record=True,
                    Pmax_mm_h=100.0, Rmax_km=30.0, alphaP=0.15, sigmaX=7.89):
-    """
-    Runs the 2D flood simulation. Returns grid and timeseries dict when record=True.
-    """
     t = 0.0
     step = 0
     next_output = output_interval
-
-    # eye initial position in meters (center)
     eye_x_m = grid.Lx / 2.0
     eye_y_m = grid.Ly / 2.0
-
     times = []
     mean_rain = []
     max_h_list = []
@@ -444,74 +362,47 @@ def simulate_flood(grid: FloodGrid, lorenz: Lorenz63, t_end=60.0, output_interva
     lorenz_x = []
     lorenz_y = []
     lorenz_z = []
-
-    # For numerical integration of Lorenz we may subcycle
     dt_chaos = 0.01
 
     while t < t_end - 1e-12:
         dt = compute_timestep(grid, alpha_CFL=0.3, dt_max=1.0, dt_min=1e-6)
-        # subcycle Lorenz integration to represent faster chaotic variability
         n_chaos = max(1, int(np.ceil(dt / dt_chaos)))
         dtc = dt / float(n_chaos)
         for _ in range(n_chaos):
             lorenz.step_rk4(dtc)
-        # modulation lambda
         lam = lorenz.modulation_factor(alpha_P=alphaP, sigma_X=sigmaX)
-        # compute precipitation field (m/s)
         Pbase = compute_typhoon_precip_field(Pmax_mm_h, Rmax_km, grid.X, grid.Y, eye_x_m, eye_y_m)
         Ptotal = Pbase * lam
-
-        # record diagnostics
         if record:
             times.append(t)
-            # mean rain in mm/hr
             mean_rain.append(np.mean(Ptotal) * 3600.0 * 1000.0)
             max_h_list.append(np.max(grid.h))
             total_volume.append(np.sum(grid.h) * grid.dx * grid.dy)
             lorenz_x.append(lorenz.X)
             lorenz_y.append(lorenz.Y)
             lorenz_z.append(lorenz.Z)
-
-        # Time integrator: SSP-RK3 (3-stage)
-        # U0 -> U1 -> U2 -> Unew
         U0 = pack_state(grid)
-
-        # stage 1
         rhs0 = spatial_operator_pack(grid)
         U1 = U0 + dt * rhs0
-        # temporary state for stage computations
         unpack_state(grid, U1)
-        # apply sources at stage: precipitation & infiltration with dt (semi-implicit friction after full step)
         apply_precip_infiltration(grid, Ptotal, dt)
-        # stage 2
         rhs1 = spatial_operator_pack(grid)
         U2 = 0.75 * U0 + 0.25 * (U1 + dt * rhs1)
         unpack_state(grid, U2)
         apply_precip_infiltration(grid, Ptotal, dt)
-        # final stage
         rhs2 = spatial_operator_pack(grid)
         Unew = (1.0/3.0) * U0 + (2.0/3.0) * (U2 + dt * rhs2)
         unpack_state(grid, Unew)
-
-        # apply precipitation/infiltration one more time (consistent)
         apply_precip_infiltration(grid, Ptotal, dt)
-
-        # apply friction semi-implicit with dt
         apply_manning_friction(grid, dt)
-
-        # advance time
         t += dt
         step += 1
-
-        # simple translation of eye (westward) as in document
-        vtrans = 5.556  # m/s
+        vtrans = 5.556
         eye_x_m -= vtrans * dt
-
         if t >= next_output - 1e-9 or t >= t_end - 1e-9:
             print(f"[t={t:.2f}s] step {step}, max h = {grid.h.max():.4f} m")
             next_output += output_interval
 
-    # finalize records
     if record:
         times.append(t)
         mean_rain.append(np.mean(Ptotal) * 3600.0 * 1000.0)
@@ -520,7 +411,6 @@ def simulate_flood(grid: FloodGrid, lorenz: Lorenz63, t_end=60.0, output_interva
         lorenz_x.append(lorenz.X)
         lorenz_y.append(lorenz.Y)
         lorenz_z.append(lorenz.Z)
-
         times = np.array(times)
         mean_rain = np.array(mean_rain)
         max_h_list = np.array(max_h_list)
@@ -528,12 +418,9 @@ def simulate_flood(grid: FloodGrid, lorenz: Lorenz63, t_end=60.0, output_interva
         lorenz_x = np.array(lorenz_x)
         lorenz_y = np.array(lorenz_y)
         lorenz_z = np.array(lorenz_z)
-
-        # discharge proxy: derivative of total volume
         dV = np.diff(total_volume, prepend=total_volume[0])
         avg_dt = times[1] - times[0] if len(times) > 1 else 1.0
         discharge_proxy = dV / avg_dt
-
         ts = {
             "time": times,
             "mean_rain_mmhr": mean_rain,
@@ -549,19 +436,9 @@ def simulate_flood(grid: FloodGrid, lorenz: Lorenz63, t_end=60.0, output_interva
     return grid
 
 # --------------------------
-# Wrapper expected by UI
+# GUI wrapper
 # --------------------------
 def run_flood_simulation(params):
-    """
-    Convenience wrapper for GUI.
-
-    params keys (optional):
-      Nx, Ny, Lx, Ly, CN, manning_n, t_end, output_interval, seed_pond,
-      Pmax_mm_h, Rmax_km, alphaP, sigmaX
-
-    Returns dictionary:
-      time, rain, discharge, ensembles, flood_depth, lorenz_x, lorenz_y, lorenz_z, max_h_ts, total_volume
-    """
     Nx = int(params.get("Nx", 40))
     Ny = int(params.get("Ny", 20))
     Lx = float(params.get("Lx", 20000.0))
@@ -571,41 +448,31 @@ def run_flood_simulation(params):
     t_end = float(params.get("t_end", 60.0))
     output_interval = float(params.get("output_interval", 10.0))
     seed_pond = bool(params.get("seed_pond", True))
-
     Pmax_mm_h = float(params.get("Pmax_mm_h", 100.0))
     Rmax_km = float(params.get("Rmax_km", 30.0))
     alphaP = float(params.get("alphaP", 0.15))
     sigmaX = float(params.get("sigmaX", 7.89))
-
     grid = FloodGrid(Nx, Ny, Lx, Ly, CN=CN, manning_n=manning_n)
     grid.set_bed_gaussian(peak=300.0, x0=Lx/2.0, y0=Ly/2.0, sigma=0.25*Lx)
-
-    # seed a small pond in center to avoid everything being dry
     if seed_pond:
         cx = Nx // 2
         cy = Ny // 2
         x0 = max(cx-1, 0); x1 = min(cx+2, Nx)
         y0 = max(cy-1, 0); y1 = min(cy+2, Ny)
         grid.h[y0:y1, x0:x1] = 0.5
-
-    # Lorenz
     lorenz = Lorenz63()
-
     grid_res, ts = simulate_flood(grid, lorenz, t_end=t_end, output_interval=output_interval, record=True,
                                   Pmax_mm_h=Pmax_mm_h, Rmax_km=Rmax_km, alphaP=alphaP, sigmaX=sigmaX)
-
     discharge = ts["discharge_m3s"]
-    # simple ensemble: perturb discharge with Gaussian noise
     n_ens = int(params.get("n_ens", 20))
     spread = max(1e-6, 0.05 * np.nanmax(np.abs(discharge)) if discharge.size>0 else 1e-3)
     ensembles = np.array([discharge + np.random.normal(0.0, spread, size=discharge.shape) for _ in range(n_ens)])
-
     results = {
         "time": ts["time"],
         "rain": ts["mean_rain_mmhr"],
         "discharge": discharge,
         "ensembles": ensembles,
-        "flood_depth": grid_res.h,  # final 2D depth field
+        "flood_depth": grid_res.h,
         "lorenz_x": ts["lorenz_x"],
         "lorenz_y": ts["lorenz_y"],
         "lorenz_z": ts["lorenz_z"],
@@ -615,7 +482,7 @@ def run_flood_simulation(params):
     return results
 
 # --------------------------
-# Quick test when run directly
+# Quick test
 # --------------------------
 if __name__ == "__main__":
     params = {"Nx":40, "Ny":20, "Lx":20000.0, "Ly":10000.0, "t_end":30.0, "output_interval":10.0}
