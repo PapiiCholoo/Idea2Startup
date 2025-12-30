@@ -1,0 +1,8 @@
+numpy
+matplotlib
+pillow
+imageio
+tqdm
+psutil
+pynvml
+numba
